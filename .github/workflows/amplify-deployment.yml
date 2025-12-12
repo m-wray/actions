@@ -81,20 +81,18 @@ jobs:
           aws amplify create-deployment \
             --app-id ${{ inputs.app-id }} \
             --branch-name ${{ inputs.branch-name }} \
-            --file-name build.zip \
             > deployment.json
 
-          echo "UPLOAD_URL=$(jq -r '.jobSummary.fileUploadUrl' deployment.json)" >> $GITHUB_ENV
-          echo "DEPLOYMENT_ID=$(jq -r '.jobSummary.jobId' deployment.json)" >> $GITHUB_ENV
+          echo "UPLOAD_URL=$(jq -r '.zipUploadUrl' deployment.json)" >> $GITHUB_ENV
+          echo "JOB_ID=$(jq -r '.jobId' deployment.json)" >> $GITHUB_ENV
 
       - name: Upload build.zip to Amplify
         run: |
-          curl -T build.zip "${UPLOAD_URL}"
+          curl -X PUT -H "Content-Type: application/zip" --data-binary @build.zip "${UPLOAD_URL}"
 
-      - name: Finalize Amplify deployment
+      - name: Start Amplify deployment
         run: |
-          aws amplify update-deployment \
+          aws amplify start-deployment \
             --app-id ${{ inputs.app-id }} \
             --branch-name ${{ inputs.branch-name }} \
-            --job-id "${DEPLOYMENT_ID}" \
-            --status SUCCEED
+            --job-id "${JOB_ID}"
