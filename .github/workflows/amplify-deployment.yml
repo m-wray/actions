@@ -1,0 +1,101 @@
+name: Amplify Deployment
+
+on:
+  workflow_call:
+    inputs:
+      app-id:
+        required: true
+        type: string
+      branch-name:
+        required: true
+        type: string
+      aws-region:
+        required: true
+        type: string
+      aws-role:
+        required: true
+        type: string
+      node-version:
+        required: false
+        type: string
+        default: '20'
+      pnpm-version:
+        required: false
+        type: string
+        default: '10.24.0'
+      build-command:
+        required: false
+        type: string
+        default: 'pnpm install --frozen-lockfile && pnpm run build'
+
+jobs:
+  deploy:
+    name: Deploy to Amplify
+    permissions:
+      id-token: write
+      contents: read
+      packages: read
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configure AWS CLI
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ inputs.aws-role }}
+          role-session-name: gha
+          aws-region: ${{ inputs.aws-region }}
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: ${{ inputs.pnpm-version }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: 'pnpm'
+
+      - name: Cache node modules
+        uses: actions/cache@v3
+        with:
+          path: ~/.pnpm-store
+          key: ${{ runner.os }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
+          restore-keys: |
+            ${{ runner.os }}-pnpm-
+
+      - name: Build Next.js app
+        run: ${{ inputs.build-command }}
+
+      - name: Zip build artifacts
+        run: |
+          cd out
+          zip -r ../build.zip .
+          cd ..
+
+      - name: Create Amplify deployment
+        run: |
+          aws amplify create-deployment \
+            --app-id ${{ inputs.app-id }} \
+            --branch-name ${{ inputs.branch-name }} \
+            --file-name build.zip \
+            > deployment.json
+
+          echo "UPLOAD_URL=$(jq -r '.jobSummary.fileUploadUrl' deployment.json)" >> $GITHUB_ENV
+          echo "DEPLOYMENT_ID=$(jq -r '.jobSummary.jobId' deployment.json)" >> $GITHUB_ENV
+
+      - name: Upload build.zip to Amplify
+        run: |
+          curl -T build.zip "${UPLOAD_URL}"
+
+      - name: Finalize Amplify deployment
+        run: |
+          aws amplify update-deployment \
+            --app-id ${{ inputs.app-id }} \
+            --branch-name ${{ inputs.branch-name }} \
+            --job-id "${DEPLOYMENT_ID}" \
+            --status SUCCEED
